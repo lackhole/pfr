@@ -151,34 +151,51 @@ struct ubiq_rref_base_asserting {
 };
 
 template <class T, std::size_t I0, std::size_t... I, class /*Enable*/ = std::enable_if_t<std::is_copy_constructible<T>::value>>
-constexpr auto assert_first_not_base(std::index_sequence<I0, I...>) noexcept
+constexpr auto assert_first_not_base(std::index_sequence<I0, I...>, long) noexcept
     -> std::add_pointer_t<decltype(T{ ubiq_lref_base_asserting<T>{}, ubiq_lref_constructor{I}... })>
 {
     return nullptr;
 }
 
 template <class T, std::size_t I0, std::size_t... I, class /*Enable*/ = std::enable_if_t<!std::is_copy_constructible<T>::value>>
-constexpr auto assert_first_not_base(std::index_sequence<I0, I...>) noexcept
+constexpr auto assert_first_not_base(std::index_sequence<I0, I...>, long) noexcept
     -> std::add_pointer_t<decltype(T{ ubiq_rref_base_asserting<T>{}, ubiq_rref_constructor{I}... })>
 {
     return nullptr;
 }
 
+template <class T, std::size_t I0, std::size_t... I, class /*Enable*/ = std::enable_if_t<std::is_copy_constructible<T>::value>>
+constexpr auto assert_first_not_base(std::index_sequence<I0, I...>, int) noexcept
+    -> std::add_pointer_t<decltype(T{ ubiq_lref_base_asserting<T>{}, {ubiq_lref_constructor{I}}... })>
+{
+    return nullptr;
+}
+
+template <class T, std::size_t I0, std::size_t... I, class /*Enable*/ = std::enable_if_t<!std::is_copy_constructible<T>::value>>
+constexpr auto assert_first_not_base(std::index_sequence<I0, I...>, int) noexcept
+    -> std::add_pointer_t<decltype(T{ ubiq_rref_base_asserting<T>{}, {ubiq_rref_constructor{I}}... })>
+{
+    return nullptr;
+}
+
 template <class T>
-constexpr void* assert_first_not_base(std::index_sequence<>) noexcept
+constexpr void* assert_first_not_base(std::index_sequence<>, long = 1L) noexcept
 {
     return nullptr;
 }
 
 template <class T, std::size_t N>
-constexpr void assert_first_not_base(int) noexcept {}
+constexpr void assert_first_not_base_dispatch(std::true_type) noexcept {
+    detail::assert_first_not_base<T>(detail::make_index_sequence<N>{}, 1);
+}
 
 template <class T, std::size_t N>
-constexpr auto assert_first_not_base(long) noexcept
-    -> std::enable_if_t<std::is_class<T>::value>
-{
-    detail::assert_first_not_base<T>(detail::make_index_sequence<N>{});
+constexpr void assert_first_not_base_dispatch(std::false_type) noexcept {
+    detail::assert_first_not_base<T>(detail::make_index_sequence<N>{}, 1L);
 }
+
+template <class T, std::size_t N>
+constexpr void assert_first_not_base(int) noexcept {}
 
 ///////////////////// Helpers for initializable detection
 // Note that these take O(N) compile time and memory!
@@ -190,8 +207,19 @@ template <class T, std::size_t... I, class /*Enable*/ = std::enable_if_t<!std::i
 constexpr auto enable_if_initializable_helper(std::index_sequence<I...>) noexcept
     -> std::add_pointer_t<decltype(T{ubiq_rref_constructor{I}...})>;
 
-template <class T, std::size_t N, class U = std::size_t, class /*Enable*/ = decltype(detail::enable_if_initializable_helper<T>(detail::make_index_sequence<N>()))>
+template <class T, std::size_t... I, class /*Enable*/ = std::enable_if_t<std::is_copy_constructible<T>::value>>
+constexpr auto enable_if_nested_initializable_helper(std::index_sequence<I...>) noexcept
+    -> std::add_pointer_t<decltype(T{{ubiq_lref_constructor{I}}...})>;
+
+template <class T, std::size_t... I, class /*Enable*/ = std::enable_if_t<!std::is_copy_constructible<T>::value>>
+constexpr auto enable_if_nested_initializable_helper(std::index_sequence<I...>) noexcept
+    -> std::add_pointer_t<decltype(T{{ubiq_rref_constructor{I}}...})>;
+
+template <class T, std::size_t N, class U = std::size_t, class /*Enable*/ = decltype(detail::enable_if_initializable_helper<T>(detail::make_index_sequence<N>{}))>
 using enable_if_initializable_helper_t = U;
+
+template <class T, std::size_t N, class U = std::size_t, class /*Enable*/ = decltype(detail::enable_if_nested_initializable_helper<T>(detail::make_index_sequence<N>{}))>
+using enable_if_nested_initializable_helper_t = U;
 
 template <class T, std::size_t N>
 constexpr auto is_initializable(long) noexcept
@@ -203,6 +231,27 @@ constexpr auto is_initializable(long) noexcept
 template <class T, std::size_t N>
 constexpr bool is_initializable(int) noexcept {
     return false;
+}
+
+template <class T, std::size_t N>
+constexpr auto is_nested_initializable(long) noexcept
+    -> detail::enable_if_nested_initializable_helper_t<T, N, bool>
+{
+    return true;
+}
+
+template <class T, std::size_t N>
+constexpr bool is_nested_initializable(int) noexcept {
+    return false;
+}
+
+template <class T, std::size_t N>
+constexpr auto assert_first_not_base(long) noexcept
+    -> std::enable_if_t<std::is_class<T>::value>
+{
+    detail::assert_first_not_base_dispatch<T, N>(
+        std::integral_constant<bool, detail::is_nested_initializable<T, N>(1L)>{}
+    );
 }
 
 ///////////////////// Helpers for range size detection
@@ -256,6 +305,32 @@ template <class T, std::size_t Begin, std::size_t Last>
 constexpr std::size_t fields_count_binary_search(detail::multi_element_range, int) noexcept {
     constexpr std::size_t next_v = (Begin + Last + 1) / 2 - 1;
     return detail::fields_count_binary_search<T, Begin, next_v>(detail::is_one_element_range<Begin, next_v>{}, 1L);
+}
+
+template <class T, std::size_t Begin, std::size_t Last>
+constexpr std::size_t fields_count_binary_search_nested(detail::one_element_range, long) noexcept {
+    static_assert(
+        Begin == Last,
+        "====================> Boost.PFR: Internal logic error."
+    );
+    return Begin;
+}
+
+template <class T, std::size_t Begin, std::size_t Last>
+constexpr std::size_t fields_count_binary_search_nested(detail::multi_element_range, int) noexcept;
+
+template <class T, std::size_t Begin, std::size_t Last>
+constexpr auto fields_count_binary_search_nested(detail::multi_element_range, long) noexcept
+    -> detail::enable_if_nested_initializable_helper_t<T, (Begin + Last + 1) / 2>
+{
+    constexpr std::size_t next_v = (Begin + Last + 1) / 2;
+    return detail::fields_count_binary_search_nested<T, next_v, Last>(detail::is_one_element_range<next_v, Last>{}, 1L);
+}
+
+template <class T, std::size_t Begin, std::size_t Last>
+constexpr std::size_t fields_count_binary_search_nested(detail::multi_element_range, int) noexcept {
+    constexpr std::size_t next_v = (Begin + Last + 1) / 2 - 1;
+    return detail::fields_count_binary_search_nested<T, Begin, next_v>(detail::is_one_element_range<Begin, next_v>{}, 1L);
 }
 
 template <class T, std::size_t Begin, std::size_t N>
@@ -478,8 +553,16 @@ constexpr std::size_t fields_count() noexcept {
     constexpr bool no_errors =
         type_is_complete && type_is_not_a_reference && type_fields_are_move_constructible
         && type_is_not_polymorphic && type_is_aggregate;
-    constexpr std::size_t result
+    constexpr std::size_t flat_result
         = detail::fields_count_dispatch<type>(1L, 1L, std::integral_constant<bool, no_errors>{});
+    constexpr std::size_t nested_result =
+        detail::fields_count_binary_search_nested<type, 0, flat_result>(
+            detail::is_one_element_range<0, flat_result>{}, 1L
+        );
+    constexpr std::size_t result =
+        detail::is_nested_initializable<type, flat_result>(1L)
+            ? flat_result
+            : (nested_result ? nested_result : flat_result);
     detail::assert_first_not_base<type, result>(1L);
 
 #ifndef __cpp_lib_is_aggregate
